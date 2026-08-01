@@ -1,0 +1,5 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+oci>=2.126
+pyyaml>=6.0
+PySocks>=1.7

@@ -1,0 +1,44 @@
+# 复制成 accounts.yaml 后填写。accounts.yaml / keys/ / identity.json 都不进 git。
+# 每个账号 = 一个密封单元：独立凭证 + 独立出口 IP + 独立指纹(自动分配)。
+# egress 就是给这个账号“分配的 IP”，固定不变。
+# 指纹(User-Agent)由程序自动生成并存到 identity.json，一账号一个、固定不变，
+# 只有换了 API 密钥(删号重导)才会变；不用在这里手填。
+panel:
+  username: "admin"            # 登录用户名（install.sh 会引导设置）
+  password_hash: ""            # 登录密码的哈希（install.sh 自动生成，勿手填明文）
+  # 也可临时用明文： password: "你的密码"  （不如 password_hash 安全）
+
+accounts:
+  # 每个账号 = 一个密封单元：独立凭证 + 独立出口 IP + 独立限流
+  - id: acct-a                 # 面板里显示的名字，随意
+    region: ap-singapore-1
+    tenancy: ocid1.tenancy.oc1..xxxx
+    user: ocid1.user.oc1..xxxx
+    fingerprint: "aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99"
+    key_file: keys/acct-a.pem  # 该账号的 API 私钥，单独存
+    # 注：上面的 fingerprint 是 OCI API 密钥指纹(控制台生成)，跟“防关联指纹”是两回事
+    # pass_phrase: ""          # 私钥有密码才填
+    compartment: ""            # 留空默认用 tenancy(根区间)
+
+    egress:                    # 关键：给这个账号指定独立出口 IP，防关联
+      proxy: "http://user:pass@1.2.3.4:8080"   # 推荐：走该账号专属代理出口
+      # source_ip: "5.6.7.8"                    # 或：本机多公网 IP 时绑定源 IP
+    limits:
+      min_interval_s: 3        # 两次调用最小间隔(含随机抖动)
+      hourly:                  # 每小时硬上限，手动狂点也压不成高频
+        list: 120
+        action: 20
+        create: 3
+        change_ip: 2
+
+  - id: acct-b
+    region: ap-tokyo-1
+    tenancy: ocid1.tenancy.oc1..yyyy
+    user: ocid1.user.oc1..yyyy
+    fingerprint: "..."
+    key_file: keys/acct-b.pem
+    egress:
+      proxy: "http://user:pass@9.9.9.9:8080"   # 和 acct-a 不同的出口！
+    limits:
+      min_interval_s: 3
+      hourly: { list: 120, action: 20, create: 3, change_ip: 2 }

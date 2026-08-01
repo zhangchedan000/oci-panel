@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OCI 控制面板</title>
+<style>
+  :root{
+    --bg:#0f1216; --panel:#171b21; --line:#252b34; --text:#e6e9ee;
+    --muted:#8b95a4; --accent:#4c8dff; --ok:#33c481; --warn:#e0a33a; --stop:#8b95a4;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.5 -apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+       background:var(--bg);color:var(--text)}
+  header{display:flex;align-items:center;gap:14px;padding:14px 20px;border-bottom:1px solid var(--line)}
+  header h1{font-size:15px;margin:0;font-weight:600;letter-spacing:.3px}
+  header .spacer{flex:1}
+  button{font:inherit;cursor:pointer;border:1px solid var(--line);background:#1e242c;
+         color:var(--text);border-radius:7px;padding:6px 12px}
+  button:hover{border-color:var(--accent)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .wrap{max-width:1000px;margin:0 auto;padding:20px}
+
+  /* login */
+  #login{max-width:340px;margin:14vh auto;background:var(--panel);border:1px solid var(--line);
+         border-radius:12px;padding:26px}
+  #login h2{margin:0 0 4px;font-size:16px}
+  #login p{margin:0 0 18px;color:var(--muted);font-size:13px}
+  #login input{width:100%;padding:10px;border-radius:7px;border:1px solid var(--line);
+               background:#0f1216;color:var(--text);margin-bottom:12px}
+
+  /* account tabs */
+  .tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}
+  .tab{padding:7px 14px;border-radius:20px;border:1px solid var(--line);background:var(--panel);
+       display:flex;align-items:center;gap:8px}
+  .tab.active{border-color:var(--accent);background:#1b2740}
+  .tab small{color:var(--muted);font-size:11px}
+
+  /* instance cards */
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+        padding:14px 16px;margin-bottom:12px;display:flex;align-items:center;gap:16px}
+  .dot{width:9px;height:9px;border-radius:50%;flex:none}
+  .dot.RUNNING{background:var(--ok)} .dot.STOPPED{background:var(--stop)}
+  .dot.STARTING,.dot.STOPPING{background:var(--warn)} .dot.other{background:var(--warn)}
+  .meta{flex:1;min-width:0}
+  .meta .name{font-weight:600}
+  .meta .sub{color:var(--muted);font-size:12px;margin-top:2px}
+  .ip{font-family:ui-monospace,Menlo,monospace}
+  .actions{display:flex;gap:8px}
+  .msg{padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:13px;display:none}
+  .msg.err{background:#3a1e22;border:1px solid #6b2c34;color:#ffb4bd;display:block}
+  .msg.warn{background:#3a331e;border:1px solid #6b5a2c;color:#ffe0a3;display:block}
+  .empty{color:var(--muted);padding:40px;text-align:center}
+  .gear{margin-left:4px;padding:2px 7px;border-radius:6px;font-size:12px;line-height:1}
+
+  /* settings modal */
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;
+           align-items:center;justify-content:center;z-index:50}
+  .overlay.show{display:flex}
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+         width:440px;max-width:92vw;padding:22px}
+  .modal h3{margin:0 0 2px;font-size:16px}
+  .modal .who{color:var(--muted);font-size:12px;margin-bottom:16px}
+  .modal label{display:block;font-size:12px;color:var(--muted);margin:12px 0 5px}
+  .modal input[type=text]{width:100%;padding:9px;border-radius:7px;border:1px solid var(--line);
+         background:#0f1216;color:var(--text);font-family:ui-monospace,Menlo,monospace;font-size:13px}
+  .radio{display:flex;gap:14px;margin-top:6px}
+  .radio label{display:flex;align-items:center;gap:6px;margin:0;color:var(--text);font-size:13px;cursor:pointer}
+  .modal .row{display:flex;gap:10px;align-items:center;margin-top:18px}
+  .modal .row .spacer{flex:1}
+  .checkbox-out{margin-top:14px;padding:10px 12px;border:1px dashed var(--line);border-radius:8px;font-size:13px}
+  .checkbox-out .ip{font-family:ui-monospace,Menlo,monospace;color:var(--ok)}
+  .modal .fp{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+
+<div id="login">
+  <h2>OCI 控制面板</h2>
+  <p>登录</p>
+  <input id="user" type="text" placeholder="用户名" value="admin" autofocus>
+  <input id="pw" type="password" placeholder="密码">
+  <button class="primary" style="width:100%" onclick="login()">登录</button>
+  <div id="loginErr" class="msg err"></div>
+</div>
+
+<div id="app" style="display:none">
+  <header>
+    <h1>OCI 控制面板</h1>
+    <div class="spacer"></div>
+    <button onclick="showQuota()">配额</button>
+    <button onclick="showTraffic()">流量</button>
+    <button onclick="refresh()">刷新</button>
+    <button onclick="logout()">退出</button>
+  </header>
+  <div class="wrap">
+    <div id="tabs" class="tabs"></div>
+    <div id="msg" class="msg"></div>
+    <div id="list"></div>
+  </div>
+</div>
+
+<div id="overlay" class="overlay" onclick="if(event.target===this)closeSettings()">
+  <div class="modal">
+    <h3>出口 IP 设置</h3>
+    <div class="who">账号 <b id="m_id"></b> · <span id="m_region"></span></div>
+
+    <div>指纹（自动分配，固定不变）</div>
+    <div class="fp" id="m_fp"></div>
+
+    <label>出口方式</label>
+    <div class="radio">
+      <label><input type="radio" name="mode" value="proxy" onchange="modeChange()"> 代理出口</label>
+      <label><input type="radio" name="mode" value="source_ip" onchange="modeChange()"> 本机源 IP</label>
+      <label><input type="radio" name="mode" value="direct" onchange="modeChange()"> 直连</label>
+    </div>
+
+    <div id="f_proxy" style="display:none">
+      <label>代理地址</label>
+      <input id="m_proxy" type="text" placeholder="http://用户:密码@1.2.3.4:8080 或 socks5://1.2.3.4:1080">
+    </div>
+    <div id="f_source" style="display:none">
+      <label>源 IP（须已加在本机网卡上）</label>
+      <input id="m_source" type="text" placeholder="5.6.7.8">
+    </div>
+
+    <div class="checkbox-out" id="m_checkout" style="display:none"></div>
+
+    <div class="row">
+      <button onclick="checkEgress()">检测当前出口 IP</button>
+      <div class="spacer"></div>
+      <button onclick="closeSettings()">取消</button>
+      <button class="primary" onclick="saveEgress()">保存</button>
+    </div>
+    <div id="m_err" class="msg err" style="margin-top:12px"></div>
+  </div>
+</div>
+
+<div id="imodal" class="overlay" onclick="if(event.target===this)closeI()">
+  <div class="modal" style="width:520px">
+    <h3>实例操作</h3>
+    <div class="who"><b id="i_name"></b></div>
+    <div id="i_err" class="msg err"></div>
+
+    <label>改配置（弹性形状：核数 / 内存 GB）</label>
+    <div class="row" style="margin-top:4px">
+      <input id="i_ocpu" type="text" placeholder="核数 如 2" style="width:110px">
+      <input id="i_mem" type="text" placeholder="内存GB 如 12" style="width:130px">
+      <div class="spacer"></div>
+      <button onclick="doShape()">应用</button>
+    </div>
+
+    <label style="margin-top:16px">引导卷</label>
+    <div class="row" style="margin-top:4px">
+      <div id="i_bv" class="fp" style="flex:1">—</div>
+      <input id="i_bvsize" type="text" placeholder="新大小GB" style="width:110px">
+      <button onclick="doResizeBV()">扩容</button>
+    </div>
+
+    <label style="margin-top:16px">防火墙（入站规则）</label>
+    <div id="i_fw" class="fp" style="margin-top:4px">—</div>
+    <div class="row" style="margin-top:6px">
+      <select id="i_fwproto" style="padding:8px;border-radius:7px;background:#0f1216;color:var(--text);border:1px solid var(--line)">
+        <option value="tcp">TCP</option><option value="udp">UDP</option>
+        <option value="icmp">ICMP</option><option value="all">ALL</option>
+      </select>
+      <input id="i_fwport" type="text" placeholder="端口" style="width:90px">
+      <input id="i_fwsrc" type="text" placeholder="来源 CIDR" value="0.0.0.0/0" style="width:130px">
+      <button onclick="addRule()">加规则</button>
+    </div>
+
+    <div class="row" style="margin-top:18px;flex-wrap:wrap;gap:8px">
+      <button onclick="doIpv6()">附加 IPv6</button>
+      <button onclick="doClone()">克隆(新建)</button>
+      <button onclick="doRebuild()" style="border-color:var(--warn)">重建</button>
+      <button onclick="doTerminate()" style="border-color:#6b2c34;color:#ffb4bd">删除</button>
+      <div class="spacer"></div>
+      <button onclick="closeI()">关闭</button>
+    </div>
+    <div id="i_out" class="checkbox-out" style="display:none;margin-top:14px"></div>
+  </div>
+</div>
+
+<div id="rmodal" class="overlay" onclick="if(event.target===this)document.getElementById('rmodal').classList.remove('show')">
+  <div class="modal">
+    <h3 id="r_title"></h3>
+    <div id="r_body" class="fp" style="margin-top:10px;white-space:pre-wrap;max-height:60vh;overflow:auto">—</div>
+    <div class="row"><div class="spacer"></div>
+      <button onclick="document.getElementById('rmodal').classList.remove('show')">关闭</button></div>
+  </div>
+</div>
+
+<script>
+let accounts = [], current = null;
+
+async function api(path, opts){
+  const r = await fetch(path, Object.assign({headers:{'Content-Type':'application/json'}}, opts));
+  if(r.status === 401){ show('login'); throw new Error('unauth'); }
+  const data = await r.json().catch(()=>({}));
+  if(!r.ok){ throw new Error(data.detail || ('HTTP '+r.status)); }
+  return data;
+}
+function show(which){
+  document.getElementById('login').style.display = which==='login'?'block':'none';
+  document.getElementById('app').style.display   = which==='app'  ?'block':'none';
+}
+function msg(text, kind){
+  const m = document.getElementById('msg');
+  if(!text){ m.style.display='none'; return; }
+  m.textContent = text; m.className = 'msg ' + (kind||'err');
+}
+
+async function login(){
+  const pw = document.getElementById('pw').value;
+  const user = document.getElementById('user').value;
+  try{
+    await api('/api/login', {method:'POST', body:JSON.stringify({username:user, password:pw})});
+    await boot();
+  }catch(e){
+    const el = document.getElementById('loginErr');
+    el.textContent = e.message; el.style.display='block';
+  }
+}
+async function logout(){ await api('/api/logout',{method:'POST'}); location.reload(); }
+
+async function boot(){
+  accounts = await api('/api/accounts');
+  if(!accounts.length){ show('app'); msg('未配置任何账号，请检查 accounts.yaml'); return; }
+  current = accounts[0].id;
+  renderTabs();
+  show('app');
+  refresh();
+}
+function renderTabs(){
+  document.getElementById('tabs').innerHTML = accounts.map(a =>
+    `<div class="tab ${a.id===current?'active':''}" onclick="switchAcct('${a.id}')"
+          title="出口: ${a.egress}\n指纹: ${a.fingerprint||''}">
+       <span>${a.id}</span>
+       <small>${a.region||''} · ${a.egress} · ${fpShort(a.fingerprint)}</small>
+       <button class="gear" title="设置出口 IP"
+               onclick="event.stopPropagation();openSettings('${a.id}')">⚙</button>
+     </div>`).join('');
+}
+function switchAcct(id){ current = id; renderTabs(); refresh(); }
+function fpShort(ua){                 // "Oracle-PythonSDK/2.181.0 (python 3.11.9; aarch64-Linux)" -> "SDK2.181/aarch64-Linux"
+  if(!ua) return '';
+  const v = (ua.match(/PythonSDK\/([\d.]+)/)||[])[1] || '';
+  const os = (ua.match(/;\s*([^)]+)\)/)||[])[1] || '';
+  return `SDK${v}/${os}`.trim();
+}
+
+let mAcct = null;
+async function openSettings(id){
+  mAcct = id;
+  const a = accounts.find(x=>x.id===id) || {};
+  document.getElementById('m_id').textContent = id;
+  document.getElementById('m_region').textContent = a.region || '';
+  document.getElementById('m_fp').textContent = a.fingerprint || '';
+  document.getElementById('m_err').style.display='none';
+  document.getElementById('m_checkout').style.display='none';
+  document.getElementById('m_proxy').value=''; document.getElementById('m_source').value='';
+  try{
+    const eg = await api(`/api/${id}/egress`);
+    const mode = eg.mode || 'direct';
+    document.querySelector(`input[name=mode][value=${mode}]`).checked = true;
+    if(mode==='proxy') document.getElementById('m_proxy').value = eg.proxy||'';
+    if(mode==='source_ip') document.getElementById('m_source').value = eg.source_ip||'';
+    modeChange();
+  }catch(e){ mErr(e.message); }
+  document.getElementById('overlay').classList.add('show');
+}
+function closeSettings(){ document.getElementById('overlay').classList.remove('show'); }
+function mErr(t){ const el=document.getElementById('m_err'); if(!t){el.style.display='none';return;} el.textContent=t; el.className='msg err'; el.style.display='block'; }
+function curMode(){ return (document.querySelector('input[name=mode]:checked')||{}).value || 'direct'; }
+function modeChange(){
+  document.getElementById('f_proxy').style.display  = curMode()==='proxy' ? 'block':'none';
+  document.getElementById('f_source').style.display = curMode()==='source_ip' ? 'block':'none';
+}
+async function saveEgress(){
+  mErr('');
+  const body = { mode: curMode(),
+                 proxy: document.getElementById('m_proxy').value.trim(),
+                 source_ip: document.getElementById('m_source').value.trim() };
+  try{
+    await api(`/api/${mAcct}/egress`, {method:'POST', body:JSON.stringify(body)});
+    await boot();               // reload account list so the tab shows the new IP
+    closeSettings();
+  }catch(e){ mErr(e.message); }
+}
+async function checkEgress(){
+  mErr('');
+  const out = document.getElementById('m_checkout');
+  out.style.display='block'; out.innerHTML='检测中…';
+  try{
+    const r = await api(`/api/${mAcct}/egress/check`);
+    out.innerHTML = `当前出口公网 IP：<span class="ip">${r.ip}</span><br><small style="color:var(--muted)">对照一下是否 = 你给这个账号分配的代理/源 IP</small>`;
+  }catch(e){ out.style.display='none'; mErr(e.message); }
+}
+
+let curRows = [];
+async function refresh(){
+  msg('');
+  const list = document.getElementById('list');
+  list.innerHTML = '<div class="empty">加载中…</div>';
+  try{
+    const rows = await api(`/api/${current}/instances`);
+    curRows = rows;
+    if(!rows.length){ list.innerHTML = '<div class="empty">该账号下没有实例</div>'; return; }
+    list.innerHTML = rows.map(card).join('');
+  }catch(e){ list.innerHTML=''; msg(e.message, softErr(e)?'warn':'err'); }
+}
+function softErr(e){ return e.message.includes('频繁')||e.message.includes('上限'); }
+function card(i){
+  const cls = ['RUNNING','STOPPED','STARTING','STOPPING'].includes(i.state)?i.state:'other';
+  const running = i.state==='RUNNING', stopped = i.state==='STOPPED';
+  const spec = (i.ocpus?`${i.ocpus} 核/${i.memory}GB · `:'') ;
+  return `<div class="card">
+    <span class="dot ${cls}" title="${i.state}"></span>
+    <div class="meta">
+      <div class="name">${i.name}</div>
+      <div class="sub">${i.shape} · ${spec}${i.state}
+        ${i.public_ip?`· <span class="ip">${i.public_ip}</span>`:''}</div>
+    </div>
+    <div class="actions">
+      <button ${running?'disabled':''} onclick="act('${i.id}','start')">开机</button>
+      <button ${stopped?'disabled':''} onclick="act('${i.id}','stop')">关机</button>
+      <button ${!running?'disabled':''} onclick="act('${i.id}','reboot')">重启</button>
+      <button ${!running?'disabled':''} onclick="changeIp('${i.id}')">换IP</button>
+      <button onclick="openInstance('${i.id}')">⋯ 更多</button>
+    </div></div>`;
+}
+
+async function act(id, action){
+  const label = {start:'开机',stop:'关机',reboot:'重启'}[action];
+  if(!confirm(`确认对该实例执行「${label}」？`)) return;
+  msg('');
+  try{
+    await api(`/api/${current}/instances/${id}/action`, {method:'POST', body:JSON.stringify({action})});
+    setTimeout(refresh, 1500);
+  }catch(e){ msg(e.message, softErr(e)?'warn':'err'); }
+}
+
+async function changeIp(id){
+  if(!confirm('确认更换该实例的公网 IP？\n这会释放当前 IP 并分配一个新的（有冷却限制，请勿频繁操作）。')) return;
+  msg('');
+  try{
+    const r = await api(`/api/${current}/instances/${id}/change-ip`, {method:'POST'});
+    msg(`已更换，新公网 IP：${r.ip}`, 'warn');
+    setTimeout(refresh, 1500);
+  }catch(e){ msg(e.message, softErr(e)?'warn':'err'); }
+}
+
+/* -------- instance operations modal -------- */
+let iInst = null;
+function iErr(t){ const el=document.getElementById('i_err'); if(!t){el.style.display='none';return;} el.textContent=t; el.className='msg err'; el.style.display='block'; }
+function iOut(html){ const el=document.getElementById('i_out'); el.style.display='block'; el.innerHTML=html; }
+function openInstance(id){
+  iInst = curRows.find(x=>x.id===id);
+  if(!iInst) return;
+  document.getElementById('i_name').textContent = iInst.name;
+  document.getElementById('i_ocpu').value = iInst.ocpus||'';
+  document.getElementById('i_mem').value = iInst.memory||'';
+  document.getElementById('i_bvsize').value=''; document.getElementById('i_fwport').value='';
+  document.getElementById('i_out').style.display='none'; iErr('');
+  document.getElementById('i_bv').textContent='加载中…';
+  document.getElementById('i_fw').textContent='加载中…';
+  document.getElementById('imodal').classList.add('show');
+  loadBootVol(); loadFirewall();
+}
+function closeI(){ document.getElementById('imodal').classList.remove('show'); refresh(); }
+
+let bvId = null;
+async function loadBootVol(){
+  try{
+    const r = await api(`/api/${current}/instances/${iInst.id}/boot-volume?ad=${encodeURIComponent(iInst.ad)}`);
+    bvId = r.id;
+    document.getElementById('i_bv').textContent = `${r.size_gbs} GB · ${r.vpus_per_gb} VPU/GB`;
+  }catch(e){ document.getElementById('i_bv').textContent = '读取失败: '+e.message; }
+}
+async function doResizeBV(){
+  const size = document.getElementById('i_bvsize').value.trim();
+  if(!size) return;
+  if(!confirm(`把引导卷扩容到 ${size} GB？（只能扩大，不能缩小）`)) return;
+  iErr('');
+  try{ await api(`/api/${current}/boot-volume/resize`,{method:'POST',body:JSON.stringify({boot_volume_id:bvId,size_gbs:parseInt(size)})});
+       iOut('引导卷扩容已提交，扩容后需在系统内扩展分区'); loadBootVol();
+  }catch(e){ iErr(e.message); }
+}
+
+let fwLists = [];
+async function loadFirewall(){
+  try{
+    const r = await api(`/api/${current}/instances/${iInst.id}/firewall`);
+    fwLists = r.lists;
+    document.getElementById('i_fw').innerHTML = fwLists.map(sl =>
+      `<div style="margin-bottom:6px"><b>${sl.name}</b>` +
+      sl.rules.map(rule =>
+        `<div style="display:flex;gap:8px;align-items:center;margin:2px 0">
+           <span style="flex:1">${rule.protocol} ${rule.port} ← ${rule.source}</span>
+           <button onclick="delRule('${sl.security_list_id}',${rule.index})" style="padding:1px 7px">删</button>
+         </div>`).join('') + `</div>`).join('');
+  }catch(e){ document.getElementById('i_fw').textContent = '读取失败: '+e.message; }
+}
+async function addRule(){
+  if(!fwLists.length){ iErr('没有可用的安全列表'); return; }
+  const body = { security_list_id: fwLists[0].security_list_id,
+                 protocol: document.getElementById('i_fwproto').value,
+                 port: document.getElementById('i_fwport').value.trim(),
+                 source: document.getElementById('i_fwsrc').value.trim() };
+  iErr('');
+  try{ await api(`/api/${current}/firewall/add`,{method:'POST',body:JSON.stringify(body)}); loadFirewall(); }
+  catch(e){ iErr(e.message); }
+}
+async function delRule(slId, index){
+  if(!confirm('删除这条入站规则？')) return;
+  iErr('');
+  try{ await api(`/api/${current}/firewall/delete`,{method:'POST',body:JSON.stringify({security_list_id:slId,index})}); loadFirewall(); }
+  catch(e){ iErr(e.message); }
+}
+async function doShape(){
+  const ocpus=document.getElementById('i_ocpu').value.trim(), mem=document.getElementById('i_mem').value.trim();
+  if(!ocpus||!mem) return;
+  if(!confirm(`把配置改成 ${ocpus} 核 / ${mem} GB？`)) return;
+  iErr('');
+  try{ await api(`/api/${current}/instances/${iInst.id}/shape`,{method:'POST',body:JSON.stringify({ocpus:parseFloat(ocpus),memory_in_gbs:parseFloat(mem)})});
+       iOut('配置修改已提交'); }
+  catch(e){ iErr(e.message); }
+}
+async function doIpv6(){
+  iErr('');
+  try{ const r=await api(`/api/${current}/instances/${iInst.id}/ipv6`,{method:'POST'}); iOut('已附加 IPv6：'+r.ipv6); }
+  catch(e){ iErr(e.message); }
+}
+async function doClone(){
+  if(!confirm('克隆此实例？将按当前配置尝试创建一台新实例（单次尝试，容量不足会直接失败，不会重试）。')) return;
+  iErr('');
+  try{ const r=await api(`/api/${current}/instances/${iInst.id}/clone`,{method:'POST'}); iOut('已创建：'+(r.name||r.id)); }
+  catch(e){ iErr(e.message); }
+}
+async function doRebuild(){
+  if(!confirm('重建此实例？\n将【删除】当前实例，再按其配置尝试创建一台新的（单次尝试）。\n若此刻容量不足，新实例会创建失败、需你手动再点，不会自动重试。')) return;
+  if(!confirm('再次确认：这会先删除当前实例，确定继续？')) return;
+  iErr('');
+  try{ const r=await api(`/api/${current}/instances/${iInst.id}/rebuild`,{method:'POST',body:JSON.stringify({preserve_boot_volume:false})}); iOut('重建已提交：'+(r.name||r.id)); }
+  catch(e){ iErr(e.message); }
+}
+async function doTerminate(){
+  if(!confirm('删除此实例？此操作不可恢复。')) return;
+  if(!confirm('再次确认删除？')) return;
+  iErr('');
+  try{ await api(`/api/${current}/instances/${iInst.id}/terminate`,{method:'POST',body:JSON.stringify({preserve_boot_volume:false})}); closeI(); }
+  catch(e){ iErr(e.message); }
+}
+
+/* -------- account-level quota / traffic -------- */
+function showResult(title, body){
+  document.getElementById('r_title').textContent = title;
+  document.getElementById('r_body').textContent = body;
+  document.getElementById('rmodal').classList.add('show');
+}
+async function showQuota(){
+  showResult('配额查询', '加载中…');
+  try{
+    const r = await api(`/api/${current}/quota`);
+    const txt = (r.limits||[]).map(l=>`${l.name}  [${l.ad}]  = ${l.value}`).join('\n') || '无数据';
+    showResult('配额查询', txt);
+  }catch(e){ showResult('配额查询', '失败: '+e.message); }
+}
+async function showTraffic(){
+  showResult('流量（近6小时）', '加载中…');
+  try{
+    const r = await api(`/api/${current}/traffic`);
+    const fmt = b => b==null?'不可用':(b/1048576).toFixed(1)+' MB';
+    showResult('流量（近6小时）', `入站: ${fmt(r.bytes_in)}\n出站: ${fmt(r.bytes_out)}`);
+  }catch(e){ showResult('流量', '失败: '+e.message); }
+}
+
+document.getElementById('pw').addEventListener('keydown', e=>{ if(e.key==='Enter') login(); });
+// try to resume an existing session
+boot().catch(()=>show('login'));
+</script>
+</body>
+</html>
