@@ -53,6 +53,8 @@ echo "==> 完成。服务监听 $HOST:$PORT"
 echo "   下一步：用 Nginx/Caddy 反代到该端口并配 HTTPS，再从浏览器访问。"
 echo "   查看日志： journalctl -u oci-panel -f"
 IP="$(curl -fsS --max-time 5 https://checkip.amazonaws.com 2>/dev/null || curl -fsS --max-time 5 https://ifconfig.me 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')"
+sleep 2                                   # give the service a moment to write the setup token
+TOKEN="$( [ -f "$DIR/setup_token.txt" ] && cat "$DIR/setup_token.txt" || true )"
 echo ""
 echo "============================================================"
 if [ "$HOST" = "0.0.0.0" ]; then
@@ -62,15 +64,11 @@ else
   echo "  控制台地址：  http://127.0.0.1:$PORT  (仅本机；用 SSH 隧道或反代访问)"
 fi
 echo "  登录用户名：  $(grep -oP 'username:\s*"\K[^"]+' "$DIR/accounts.yaml" 2>/dev/null || echo admin)"
-echo "============================================================"
-sleep 2
-if [ -f "$DIR/setup_token.txt" ]; then
-  echo ""
-  echo "  ★ 首次设置：打开上面地址，输入下面这个令牌来设置登录用户名/密码"
-  echo "     设置令牌： $(cat "$DIR/setup_token.txt")"
-  echo "     (设置完成后此令牌自动失效)"
-  echo "============================================================"
+if [ -n "$TOKEN" ]; then
+  echo "  首次设置令牌：$TOKEN"
+  echo "  (打开上面地址，用此令牌设置登录密码；设置后即失效)"
 fi
+echo "============================================================"
 
 if [ "$HOST" = "0.0.0.0" ]; then
   echo ""
