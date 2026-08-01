@@ -23,11 +23,11 @@
   .wrap{max-width:1000px;margin:0 auto;padding:20px}
 
   /* login */
-  #login{max-width:340px;margin:14vh auto;background:var(--panel);border:1px solid var(--line);
+  #login,#setup{max-width:340px;margin:14vh auto;background:var(--panel);border:1px solid var(--line);
          border-radius:12px;padding:26px}
-  #login h2{margin:0 0 4px;font-size:16px}
-  #login p{margin:0 0 18px;color:var(--muted);font-size:13px}
-  #login input{width:100%;padding:10px;border-radius:7px;border:1px solid var(--line);
+  #login h2,#setup h2{margin:0 0 4px;font-size:16px}
+  #login p,#setup p{margin:0 0 18px;color:var(--muted);font-size:13px}
+  #login input,#setup input{width:100%;padding:10px;border-radius:7px;border:1px solid var(--line);
                background:#0f1216;color:var(--text);margin-bottom:12px}
 
   /* account tabs */
@@ -85,12 +85,24 @@
   <div id="loginErr" class="msg err"></div>
 </div>
 
+<div id="setup" style="display:none">
+  <h2>首次设置</h2>
+  <p>面板尚未设置密码。请输入安装终端里显示的<b>设置令牌</b>，并设定登录用户名/密码。</p>
+  <input id="s_token" type="text" placeholder="设置令牌（见安装终端/日志）" autofocus>
+  <input id="s_user" type="text" placeholder="登录用户名" value="admin">
+  <input id="s_pw" type="password" placeholder="设置密码（至少6位）">
+  <input id="s_pw2" type="password" placeholder="再输一次确认">
+  <button class="primary" style="width:100%" onclick="doSetup()">完成设置</button>
+  <div id="setupErr" class="msg err"></div>
+</div>
+
 <div id="app" style="display:none">
   <header>
     <h1>OCI 控制面板</h1>
     <div class="spacer"></div>
     <button onclick="showQuota()">配额</button>
     <button onclick="showTraffic()">流量</button>
+    <button onclick="openPw()">改密码</button>
     <button onclick="refresh()">刷新</button>
     <button onclick="logout()">退出</button>
   </header>
@@ -182,6 +194,22 @@
   </div>
 </div>
 
+<div id="pwmodal" class="overlay" onclick="if(event.target===this)this.classList.remove('show')">
+  <div class="modal">
+    <h3>修改密码</h3>
+    <label>原密码</label>
+    <input id="pw_old" type="password" style="width:100%;padding:9px;border-radius:7px;border:1px solid var(--line);background:#0f1216;color:var(--text)">
+    <label>新密码（至少6位）</label>
+    <input id="pw_new" type="password" style="width:100%;padding:9px;border-radius:7px;border:1px solid var(--line);background:#0f1216;color:var(--text)">
+    <label>确认新密码</label>
+    <input id="pw_new2" type="password" style="width:100%;padding:9px;border-radius:7px;border:1px solid var(--line);background:#0f1216;color:var(--text)">
+    <div id="pw_err" class="msg err" style="margin-top:12px"></div>
+    <div class="row"><div class="spacer"></div>
+      <button onclick="document.getElementById('pwmodal').classList.remove('show')">取消</button>
+      <button class="primary" onclick="doChangePw()">保存</button></div>
+  </div>
+</div>
+
 <div id="rmodal" class="overlay" onclick="if(event.target===this)document.getElementById('rmodal').classList.remove('show')">
   <div class="modal">
     <h3 id="r_title"></h3>
@@ -203,12 +231,35 @@ async function api(path, opts){
 }
 function show(which){
   document.getElementById('login').style.display = which==='login'?'block':'none';
+  document.getElementById('setup').style.display = which==='setup'?'block':'none';
   document.getElementById('app').style.display   = which==='app'  ?'block':'none';
 }
 function msg(text, kind){
   const m = document.getElementById('msg');
   if(!text){ m.style.display='none'; return; }
   m.textContent = text; m.className = 'msg ' + (kind||'err');
+}
+
+async function start(){
+  try{
+    const st = await api('/api/status');
+    if(!st.configured){ show('setup'); return; }
+  }catch(e){}
+  boot().catch(()=>show('login'));
+}
+async function doSetup(){
+  const el=document.getElementById('setupErr'); el.style.display='none';
+  const pw=document.getElementById('s_pw').value, pw2=document.getElementById('s_pw2').value;
+  if(pw!==pw2){ el.textContent='两次密码不一致'; el.style.display='block'; return; }
+  try{
+    await api('/api/setup',{method:'POST',body:JSON.stringify({
+      token:document.getElementById('s_token').value.trim(),
+      username:document.getElementById('s_user').value.trim()||'admin',
+      password:pw })});
+    // prefill login and switch
+    document.getElementById('user').value=document.getElementById('s_user').value.trim()||'admin';
+    show('login');
+  }catch(e){ el.textContent=e.message; el.style.display='block'; }
 }
 
 async function login(){
@@ -223,6 +274,22 @@ async function login(){
   }
 }
 async function logout(){ await api('/api/logout',{method:'POST'}); location.reload(); }
+
+function openPw(){
+  document.getElementById('pw_old').value=''; document.getElementById('pw_new').value=''; document.getElementById('pw_new2').value='';
+  document.getElementById('pw_err').style.display='none';
+  document.getElementById('pwmodal').classList.add('show');
+}
+async function doChangePw(){
+  const el=document.getElementById('pw_err'); el.style.display='none';
+  const o=document.getElementById('pw_old').value, n=document.getElementById('pw_new').value, n2=document.getElementById('pw_new2').value;
+  if(n!==n2){ el.textContent='两次新密码不一致'; el.style.display='block'; return; }
+  try{
+    await api('/api/change-password',{method:'POST',body:JSON.stringify({old_password:o,new_password:n})});
+    document.getElementById('pwmodal').classList.remove('show');
+    msg('密码已修改','warn');
+  }catch(e){ el.textContent=e.message; el.style.display='block'; }
+}
 
 async function boot(){
   accounts = await api('/api/accounts');
@@ -477,8 +544,8 @@ async function showTraffic(){
 }
 
 document.getElementById('pw').addEventListener('keydown', e=>{ if(e.key==='Enter') login(); });
-// try to resume an existing session
-boot().catch(()=>show('login'));
+// on load: setup screen if unconfigured, else resume session / login
+start();
 </script>
 </body>
 </html>

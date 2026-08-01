@@ -4,8 +4,8 @@
 # 指纹(User-Agent)由程序自动生成并存到 identity.json，一账号一个、固定不变，
 # 只有换了 API 密钥(删号重导)才会变；不用在这里手填。
 panel:
-  username: "admin"            # 登录用户名（install.sh 会引导设置）
-  password_hash: ""            # 登录密码的哈希（install.sh 自动生成，勿手填明文）
+  username: "admin"            # 占位；首次在网页设置时可改
+  password_hash: ""            # 留空=首次访问网页时设置密码(令牌保护)；勿手填明文
   # 也可临时用明文： password: "你的密码"  （不如 password_hash 安全）
 
 accounts:

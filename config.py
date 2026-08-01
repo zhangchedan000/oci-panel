@@ -48,9 +48,10 @@ def load(path: str) -> tuple[Manager, str]:
     username = str(panel.get("username", "admin")).strip() or "admin"
     pw_hash = str(panel.get("password_hash", "")).strip()
     pw_plain = str(panel.get("password", "")).strip()
-    if not pw_hash and (not pw_plain or pw_plain == "change-me"):
-        raise SystemExit("请先设置面板登录密码（重跑 install.sh 会引导你设置用户名/密码）")
-    panel_auth = {"username": username, "hash": pw_hash or None, "plain": pw_plain or None}
+    configured = bool(pw_hash) or bool(pw_plain and pw_plain != "change-me")
+    # not configured => panel starts in first-run web-setup mode (token-gated), no SystemExit
+    panel_auth = {"username": username, "hash": pw_hash or None,
+                  "plain": pw_plain or None, "configured": configured}
 
     # identity.json lives next to accounts.yaml, local only
     base_dir = os.path.dirname(os.path.abspath(path))

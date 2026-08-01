@@ -29,6 +29,22 @@ CFG_PATH = os.environ.get("OCI_PANEL_CONFIG", os.path.join(HERE, "accounts.yaml"
 
 manager, PANEL_AUTH = load(CFG_PATH)
 
+# First-run setup: if no password is configured yet, generate a one-time setup
+# token so ONLY whoever can see the server logs/terminal can set the initial
+# password (prevents a public scanner from claiming the panel first).
+SETUP_TOKEN_FILE = os.path.join(os.path.dirname(os.path.abspath(CFG_PATH)), "setup_token.txt")
+SETUP_TOKEN = None
+if not PANEL_AUTH["configured"]:
+    SETUP_TOKEN = secrets.token_urlsafe(24)
+    try:
+        with open(SETUP_TOKEN_FILE, "w", encoding="utf-8") as f:
+            f.write(SETUP_TOKEN)
+        os.chmod(SETUP_TOKEN_FILE, 0o600)
+    except OSError:
+        pass
+    print(f"[setup] 面板尚未设置密码。首次设置令牌: {SETUP_TOKEN}", flush=True)
+    print("[setup] 打开控制台后输入此令牌 + 你要设的用户名/密码完成初始化。", flush=True)
+
 app = FastAPI(title="OCI Panel", docs_url=None, redoc_url=None, openapi_url=None)
 _sessions: set[str] = set()          # in-memory session tokens (single-user panel)
 
@@ -38,6 +54,36 @@ def require_auth(session: str | None = Cookie(default=None)):
     if not session or session not in _sessions:
         raise HTTPException(status_code=401, detail="未登录")
     return True
+
+
+@app.get("/api/status")
+def status():
+    return {"configured": PANEL_AUTH["configured"]}
+
+
+class Setup(BaseModel):
+    token: str
+    username: str = "admin"
+    password: str
+
+
+@app.post("/api/setup")
+def setup(body: Setup):
+    if PANEL_AUTH["configured"]:
+        raise HTTPException(status_code=400, detail="已初始化，请直接登录")
+    if not SETUP_TOKEN or not secrets.compare_digest(body.token, SETUP_TOKEN):
+        raise HTTPException(status_code=401, detail="设置令牌不正确（见安装终端/日志）")
+    if len(body.password) < 6:
+        raise HTTPException(status_code=400, detail="密码至少 6 位")
+    uname = (body.username or "admin").strip() or "admin"
+    h = auth.hash_password(body.password)
+    auth.rewrite_panel(CFG_PATH, username=uname, password_hash=h)
+    PANEL_AUTH.update(username=uname, hash=h, plain=None, configured=True)
+    try:
+        os.remove(SETUP_TOKEN_FILE)
+    except OSError:
+        pass
+    return {"ok": True}
 
 
 class Login(BaseModel):
@@ -57,6 +103,27 @@ def login(body: Login, response: Response):
     token = secrets.token_urlsafe(32)
     _sessions.add(token)
     response.set_cookie("session", token, httponly=True, samesite="lax", max_age=86400)
+    return {"ok": True}
+
+
+class ChangePw(BaseModel):
+    old_password: str
+    new_password: str
+
+
+@app.post("/api/change-password")
+def change_password(body: ChangePw, _=Depends(require_auth)):
+    if PANEL_AUTH["hash"]:
+        ok = auth.verify_password(body.old_password, PANEL_AUTH["hash"])
+    else:
+        ok = secrets.compare_digest(body.old_password, PANEL_AUTH["plain"] or "")
+    if not ok:
+        raise HTTPException(status_code=401, detail="原密码不正确")
+    if len(body.new_password) < 6:
+        raise HTTPException(status_code=400, detail="新密码至少 6 位")
+    h = auth.hash_password(body.new_password)
+    auth.rewrite_panel(CFG_PATH, password_hash=h)
+    PANEL_AUTH.update(hash=h, plain=None, configured=True)
     return {"ok": True}
 
 

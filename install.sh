@@ -15,31 +15,9 @@ python3 -m venv "$DIR/.venv"
 
 if [ ! -f "$DIR/accounts.yaml" ]; then
   cp "$DIR/accounts.example.yaml" "$DIR/accounts.yaml"
-  # --- set panel login user/password interactively (hashed, not plaintext) ---
-  if [ -e /dev/tty ]; then
-    printf "设置面板登录用户名 [admin]: " > /dev/tty; read -r PU < /dev/tty || PU=""
-    PU="${PU:-admin}"
-    while :; do
-      printf "设置面板登录密码: " > /dev/tty; read -rs PP < /dev/tty; echo > /dev/tty
-      printf "再输一次确认: " > /dev/tty; read -rs PP2 < /dev/tty; echo > /dev/tty
-      [ -n "$PP" ] && [ "$PP" = "$PP2" ] && break
-      echo "  两次不一致或为空，重来。" > /dev/tty
-    done
-    HASH="$("$DIR/.venv/bin/python" "$DIR/auth.py" "$PP")"
-    python3 - "$DIR/accounts.yaml" "$PU" "$HASH" << 'PYIN'
-import sys, re
-path, user, h = sys.argv[1], sys.argv[2], sys.argv[3]
-s = open(path, encoding="utf-8").read()
-s = re.sub(r'username:\s*".*?"', f'username: "{user}"', s, count=1)
-s = re.sub(r'password_hash:\s*".*?"', f'password_hash: "{h}"', s, count=1)
-open(path, "w", encoding="utf-8").write(s)
-PYIN
-    echo "==> 登录用户名/密码已设置（密码以哈希存储）。" > /dev/tty
-  else
-    echo "==> 无交互终端，请手动编辑 $DIR/accounts.yaml 的 panel 段设置密码。"
-  fi
-  echo "==> 已生成 accounts.yaml。接着编辑它填 [每个账号的 API Key + 出口 IP]，"
+  echo "==> 已生成 accounts.yaml。请编辑它填 [每个账号的 API Key + 出口 IP]，"
   echo "    然后重跑一键安装命令（或 bash $DIR/install.sh）完成安装。"
+  echo "    登录密码不在这里设——服务起来后在网页里首次设置（用终端显示的令牌）。"
   exit 0
 fi
 
@@ -48,7 +26,7 @@ echo "==> 加固密钥权限"
 mkdir -p "$DIR/keys"
 chmod 700 "$DIR/keys" || true
 chmod 600 "$DIR"/keys/*.pem 2>/dev/null || true
-chmod 600 "$DIR/accounts.yaml" "$DIR/identity.json" "$DIR/settings.json" 2>/dev/null || true
+chmod 600 "$DIR/accounts.yaml" "$DIR/identity.json" "$DIR/settings.json" "$DIR/setup_token.txt" 2>/dev/null || true
 
 echo "==> 写入 systemd 服务"
 sudo tee /etc/systemd/system/oci-panel.service >/dev/null << UNIT
@@ -82,6 +60,14 @@ else
 fi
 echo "  登录用户名：  $(grep -oP 'username:\s*"\K[^"]+' "$DIR/accounts.yaml" 2>/dev/null || echo admin)"
 echo "============================================================"
+sleep 2
+if [ -f "$DIR/setup_token.txt" ]; then
+  echo ""
+  echo "  ★ 首次设置：打开上面地址，输入下面这个令牌来设置登录用户名/密码"
+  echo "     设置令牌： $(cat "$DIR/setup_token.txt")"
+  echo "     (设置完成后此令牌自动失效)"
+  echo "============================================================"
+fi
 
 if [ "$HOST" = "0.0.0.0" ]; then
   echo ""
