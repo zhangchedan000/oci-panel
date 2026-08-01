@@ -61,6 +61,11 @@ def status():
     return {"configured": PANEL_AUTH["configured"]}
 
 
+@app.get("/api/me")
+def me(_=Depends(require_auth)):
+    return {"username": PANEL_AUTH["username"]}
+
+
 class Setup(BaseModel):
     token: str
     username: str = "admin"
@@ -108,7 +113,8 @@ def login(body: Login, response: Response):
 
 class ChangePw(BaseModel):
     old_password: str
-    new_password: str
+    new_password: str | None = None
+    new_username: str | None = None
 
 
 @app.post("/api/change-password")
@@ -119,12 +125,26 @@ def change_password(body: ChangePw, _=Depends(require_auth)):
         ok = secrets.compare_digest(body.old_password, PANEL_AUTH["plain"] or "")
     if not ok:
         raise HTTPException(status_code=401, detail="原密码不正确")
-    if len(body.new_password) < 6:
+
+    new_username = (body.new_username or "").strip()
+    new_password = body.new_password or ""
+    if not new_username and not new_password:
+        raise HTTPException(status_code=400, detail="没有要修改的内容")
+    if new_password and len(new_password) < 6:
         raise HTTPException(status_code=400, detail="新密码至少 6 位")
-    h = auth.hash_password(body.new_password)
-    auth.rewrite_panel(CFG_PATH, password_hash=h)
-    PANEL_AUTH.update(hash=h, plain=None, configured=True)
-    return {"ok": True}
+
+    kwargs = {}
+    if new_username:
+        kwargs["username"] = new_username
+    if new_password:
+        kwargs["password_hash"] = auth.hash_password(new_password)
+    auth.rewrite_panel(CFG_PATH, **kwargs)
+    if new_username:
+        PANEL_AUTH["username"] = new_username
+    if new_password:
+        PANEL_AUTH.update(hash=kwargs["password_hash"], plain=None)
+    PANEL_AUTH["configured"] = True
+    return {"ok": True, "username": PANEL_AUTH["username"]}
 
 
 @app.post("/api/logout")
@@ -152,15 +172,24 @@ def reload_manager():
 
 class AddAccount(BaseModel):
     id: str
-    region: str
-    tenancy: str
-    user: str
-    fingerprint: str
-    private_key: str                 # PEM content pasted by the user
+    oci_config: str                  # pasted [DEFAULT] block from the console
+    private_key: str                 # PEM content (pasted or read from a .pem file)
     compartment: str | None = None
     egress_mode: str = "proxy"       # proxy | source_ip | direct
-    proxy: str | None = None
+    proxy: str | None = None         # frontend assembles this from protocol/host/port/user/pass
     source_ip: str | None = None
+
+
+def _parse_oci_config(text: str) -> dict:
+    """Extract user/fingerprint/tenancy/region from a pasted console config block.
+    Ignores key_file and comments. Raises ValueError if anything is missing."""
+    out = {}
+    for key in ("user", "fingerprint", "tenancy", "region"):
+        m = _re.search(rf"^\s*{key}\s*=\s*([^\s#]+)", text, _re.MULTILINE)
+        if not m:
+            raise ValueError(f"配置里缺少 {key}（请把控制台的 [DEFAULT] 段整段粘贴）")
+        out[key] = m.group(1).strip()
+    return out
 
 
 @app.post("/api/accounts")
@@ -171,6 +200,10 @@ def add_account(body: AddAccount, _=Depends(require_auth)):
         raise HTTPException(status_code=400, detail=f"账号 '{body.id}' 已存在")
     if "-----BEGIN" not in body.private_key or "PRIVATE KEY-----" not in body.private_key:
         raise HTTPException(status_code=400, detail="私钥格式不对（应是 -----BEGIN ... PRIVATE KEY----- 的 PEM）")
+    try:
+        parsed = _parse_oci_config(body.oci_config)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     # validate egress shape early
     eg = {"mode": body.egress_mode, "proxy": body.proxy, "source_ip": body.source_ip}
     try:
@@ -190,9 +223,9 @@ def add_account(body: AddAccount, _=Depends(require_auth)):
         f.write(body.private_key.strip() + "\n")
     os.chmod(key_path, 0o600)
 
-    acct = {"id": body.id, "region": body.region.strip(),
-            "tenancy": body.tenancy.strip(), "user": body.user.strip(),
-            "fingerprint": body.fingerprint.strip(), "key_file": key_path}
+    acct = {"id": body.id, "region": parsed["region"],
+            "tenancy": parsed["tenancy"], "user": parsed["user"],
+            "fingerprint": parsed["fingerprint"], "key_file": key_path}
     if body.compartment:
         acct["compartment"] = body.compartment.strip()
     if body.egress_mode == "proxy":
@@ -205,15 +238,19 @@ def add_account(body: AddAccount, _=Depends(require_auth)):
     try:
         _config.add_account(CFG_PATH, acct)
         reload_manager()          # validates creds format via oci; assigns fingerprint
-    except SystemExit as e:
-        _config.remove_account(CFG_PATH, body.id)   # roll back a bad entry
+    except HTTPException:
+        raise
+    except BaseException as e:     # any failure -> roll back the entry + key, never leave a broken config
+        try:
+            _config.remove_account(CFG_PATH, body.id)
+        except Exception:
+            pass
         try:
             os.remove(key_path)
         except OSError:
             pass
-        raise HTTPException(status_code=400, detail=f"账号信息有误：{e}")
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        msg = str(e) or e.__class__.__name__
+        raise HTTPException(status_code=400, detail=f"账号信息有误（请检查配置和私钥）：{msg}")
     return {"ok": True, "id": body.id}
 
 
