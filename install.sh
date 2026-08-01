@@ -14,11 +14,14 @@ python3 -m venv "$DIR/.venv"
 "$DIR/.venv/bin/pip" install -r "$DIR/requirements.txt"
 
 if [ ! -f "$DIR/accounts.yaml" ]; then
-  cp "$DIR/accounts.example.yaml" "$DIR/accounts.yaml"
-  echo "==> 已生成 accounts.yaml。请编辑它填 [每个账号的 API Key + 出口 IP]，"
-  echo "    然后重跑一键安装命令（或 bash $DIR/install.sh）完成安装。"
-  echo "    登录密码不在这里设——服务起来后在网页里首次设置（用终端显示的令牌）。"
-  exit 0
+  # minimal config: no accounts, no password — both are set later in the web UI
+  cat > "$DIR/accounts.yaml" << 'YML'
+panel:
+  username: "admin"
+  password_hash: ""
+accounts: []
+YML
+  echo "==> 已生成初始配置（无需手填账号/密码，稍后全在网页里完成）。"
 fi
 
 
