@@ -38,7 +38,7 @@ if not PANEL_AUTH["configured"]:
     SETUP_TOKEN = secrets.token_urlsafe(24)
     try:
         with open(SETUP_TOKEN_FILE, "w", encoding="utf-8") as f:
-            f.write(SETUP_TOKEN)
+            f.write(SETUP_TOKEN + "\n")
         os.chmod(SETUP_TOKEN_FILE, 0o600)
     except OSError:
         pass
@@ -71,7 +71,7 @@ class Setup(BaseModel):
 def setup(body: Setup):
     if PANEL_AUTH["configured"]:
         raise HTTPException(status_code=400, detail="已初始化，请直接登录")
-    if not SETUP_TOKEN or not secrets.compare_digest(body.token, SETUP_TOKEN):
+    if not SETUP_TOKEN or not secrets.compare_digest((body.token or "").strip(), SETUP_TOKEN):
         raise HTTPException(status_code=401, detail="设置令牌不正确（见安装终端/日志）")
     if len(body.password) < 6:
         raise HTTPException(status_code=400, detail="密码至少 6 位")
