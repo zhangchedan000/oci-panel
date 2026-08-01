@@ -140,6 +140,106 @@ def accounts(_=Depends(require_auth)):
     return manager.account_ids()
 
 
+BASE_DIR = os.path.dirname(os.path.abspath(CFG_PATH))
+import config as _config
+import re as _re
+
+
+def reload_manager():
+    global manager, PANEL_AUTH
+    manager, PANEL_AUTH = load(CFG_PATH)
+
+
+class AddAccount(BaseModel):
+    id: str
+    region: str
+    tenancy: str
+    user: str
+    fingerprint: str
+    private_key: str                 # PEM content pasted by the user
+    compartment: str | None = None
+    egress_mode: str = "proxy"       # proxy | source_ip | direct
+    proxy: str | None = None
+    source_ip: str | None = None
+
+
+@app.post("/api/accounts")
+def add_account(body: AddAccount, _=Depends(require_auth)):
+    if not _re.match(r"^[A-Za-z0-9_-]{1,40}$", body.id):
+        raise HTTPException(status_code=400, detail="账号名只能用字母/数字/下划线/横线，长度 1-40")
+    if body.id in manager._accounts:
+        raise HTTPException(status_code=400, detail=f"账号 '{body.id}' 已存在")
+    if "-----BEGIN" not in body.private_key or "PRIVATE KEY-----" not in body.private_key:
+        raise HTTPException(status_code=400, detail="私钥格式不对（应是 -----BEGIN ... PRIVATE KEY----- 的 PEM）")
+    # validate egress shape early
+    eg = {"mode": body.egress_mode, "proxy": body.proxy, "source_ip": body.source_ip}
+    try:
+        Egress.from_dict(eg)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # write private key
+    keys_dir = os.path.join(BASE_DIR, "keys")
+    os.makedirs(keys_dir, exist_ok=True)
+    try:
+        os.chmod(keys_dir, 0o700)
+    except OSError:
+        pass
+    key_path = os.path.join(keys_dir, body.id + ".pem")
+    with open(key_path, "w", encoding="utf-8") as f:
+        f.write(body.private_key.strip() + "\n")
+    os.chmod(key_path, 0o600)
+
+    acct = {"id": body.id, "region": body.region.strip(),
+            "tenancy": body.tenancy.strip(), "user": body.user.strip(),
+            "fingerprint": body.fingerprint.strip(), "key_file": key_path}
+    if body.compartment:
+        acct["compartment"] = body.compartment.strip()
+    if body.egress_mode == "proxy":
+        acct["egress"] = {"proxy": body.proxy.strip()}
+    elif body.egress_mode == "source_ip":
+        acct["egress"] = {"source_ip": body.source_ip.strip()}
+    else:
+        acct["egress"] = {}
+
+    try:
+        _config.add_account(CFG_PATH, acct)
+        reload_manager()          # validates creds format via oci; assigns fingerprint
+    except SystemExit as e:
+        _config.remove_account(CFG_PATH, body.id)   # roll back a bad entry
+        try:
+            os.remove(key_path)
+        except OSError:
+            pass
+        raise HTTPException(status_code=400, detail=f"账号信息有误：{e}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "id": body.id}
+
+
+class DelAccount(BaseModel):
+    delete_key: bool = True
+
+
+@app.post("/api/accounts/{acct_id}/delete")
+def delete_account(acct_id: str, body: DelAccount, _=Depends(require_auth)):
+    try:
+        acct = manager.get(acct_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="账号不存在")
+    key_file = acct.oci_config.get("key_file")
+    _config.remove_account(CFG_PATH, acct_id)
+    if body.delete_key and key_file:
+        kf = os.path.abspath(key_file)
+        if kf.startswith(os.path.join(BASE_DIR, "keys")) and os.path.exists(kf):
+            try:
+                os.remove(kf)
+            except OSError:
+                pass
+    reload_manager()          # identity.prune() drops the removed account's fingerprint
+    return {"ok": True}
+
+
 # ---- instance ops (all single-shot, rate-limited, per-account) -----------
 def _run(acct_id, op_name, fn, ok_extra=None):
     """Run an op through the account guard; map errors to HTTP consistently."""

@@ -100,6 +100,7 @@
   <header>
     <h1>OCI 控制面板</h1>
     <div class="spacer"></div>
+    <button onclick="openAdd()">添加账号</button>
     <button onclick="showQuota()">配额</button>
     <button onclick="showTraffic()">流量</button>
     <button onclick="openPw()">改密码</button>
@@ -141,6 +142,7 @@
 
     <div class="row">
       <button onclick="checkEgress()">检测当前出口 IP</button>
+      <button onclick="delAccount()" style="border-color:#6b2c34;color:#ffb4bd">删除账号</button>
       <div class="spacer"></div>
       <button onclick="closeSettings()">取消</button>
       <button class="primary" onclick="saveEgress()">保存</button>
@@ -191,6 +193,45 @@
       <button onclick="closeI()">关闭</button>
     </div>
     <div id="i_out" class="checkbox-out" style="display:none;margin-top:14px"></div>
+  </div>
+</div>
+
+<div id="addmodal" class="overlay" onclick="if(event.target===this)closeAdd()">
+  <div class="modal" style="width:540px;max-height:88vh;overflow:auto">
+    <h3>添加账号</h3>
+    <div id="a_httpswarn" class="msg warn" style="display:none">
+      ⚠ 当前不是 HTTPS 连接。私钥会明文经网络传到服务器，可能被截。
+      建议先配好 HTTPS（NPM/Caddy）或走 SSH 隧道/本机访问再添加账号。
+    </div>
+    <label>账号名（自定义，字母数字-_，唯一）</label>
+    <input id="a_id" type="text" placeholder="如 acct-c">
+    <label>区域 region</label>
+    <input id="a_region" type="text" placeholder="如 ap-singapore-1">
+    <label>Tenancy OCID</label>
+    <input id="a_tenancy" type="text" placeholder="ocid1.tenancy.oc1..">
+    <label>User OCID</label>
+    <input id="a_user" type="text" placeholder="ocid1.user.oc1..">
+    <label>API 密钥指纹 fingerprint（控制台生成）</label>
+    <input id="a_fp" type="text" placeholder="aa:bb:cc:...">
+    <label>Compartment OCID（可选，留空=根区间）</label>
+    <input id="a_comp" type="text" placeholder="（可选）">
+    <label>API 私钥（PEM，整段粘贴）</label>
+    <textarea id="a_key" rows="5" placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----"
+      style="width:100%;padding:9px;border-radius:7px;border:1px solid var(--line);background:#0f1216;color:var(--text);font-family:ui-monospace,Menlo,monospace;font-size:12px"></textarea>
+    <label>出口 IP</label>
+    <div class="radio">
+      <label><input type="radio" name="amode" value="proxy" checked onchange="aMode()"> 代理</label>
+      <label><input type="radio" name="amode" value="source_ip" onchange="aMode()"> 源 IP</label>
+      <label><input type="radio" name="amode" value="direct" onchange="aMode()"> 直连</label>
+    </div>
+    <div id="a_fproxy"><input id="a_proxy" type="text" placeholder="http://用户:密码@IP:端口 或 socks5://IP:端口"
+      style="width:100%;padding:9px;border-radius:7px;border:1px solid var(--line);background:#0f1216;color:var(--text);margin-top:6px"></div>
+    <div id="a_fsource" style="display:none"><input id="a_source" type="text" placeholder="5.6.7.8"
+      style="width:100%;padding:9px;border-radius:7px;border:1px solid var(--line);background:#0f1216;color:var(--text);margin-top:6px"></div>
+    <div id="a_err" class="msg err" style="margin-top:12px"></div>
+    <div class="row"><div class="spacer"></div>
+      <button onclick="closeAdd()">取消</button>
+      <button class="primary" onclick="doAdd()">添加</button></div>
   </div>
 </div>
 
@@ -275,6 +316,31 @@ async function login(){
 }
 async function logout(){ await api('/api/logout',{method:'POST'}); location.reload(); }
 
+function curAMode(){ return (document.querySelector('input[name=amode]:checked')||{}).value || 'proxy'; }
+function aMode(){
+  document.getElementById('a_fproxy').style.display  = curAMode()==='proxy' ? 'block':'none';
+  document.getElementById('a_fsource').style.display = curAMode()==='source_ip' ? 'block':'none';
+}
+function v(id){ return document.getElementById(id).value.trim(); }
+function openAdd(){
+  ['a_id','a_region','a_tenancy','a_user','a_fp','a_comp','a_key','a_proxy','a_source'].forEach(i=>document.getElementById(i).value='');
+  document.querySelector('input[name=amode][value=proxy]').checked=true; aMode();
+  document.getElementById('a_err').style.display='none';
+  document.getElementById('a_httpswarn').style.display = (location.protocol==='https:')?'none':'block';
+  document.getElementById('addmodal').classList.add('show');
+}
+function closeAdd(){ document.getElementById('addmodal').classList.remove('show'); }
+async function doAdd(){
+  const el=document.getElementById('a_err'); el.style.display='none';
+  const body={ id:v('a_id'), region:v('a_region'), tenancy:v('a_tenancy'), user:v('a_user'),
+    fingerprint:v('a_fp'), compartment:v('a_comp')||null, private_key:document.getElementById('a_key').value,
+    egress_mode:curAMode(), proxy:v('a_proxy')||null, source_ip:v('a_source')||null };
+  try{
+    await api('/api/accounts',{method:'POST',body:JSON.stringify(body)});
+    closeAdd(); await boot();
+  }catch(e){ el.textContent=e.message; el.style.display='block'; }
+}
+
 function openPw(){
   document.getElementById('pw_old').value=''; document.getElementById('pw_new').value=''; document.getElementById('pw_new2').value='';
   document.getElementById('pw_err').style.display='none';
@@ -293,7 +359,7 @@ async function doChangePw(){
 
 async function boot(){
   accounts = await api('/api/accounts');
-  if(!accounts.length){ show('app'); msg('未配置任何账号，请检查 accounts.yaml'); return; }
+  if(!accounts.length){ show('app'); msg('还没有账号，点右上角「添加账号」来添加第一个。','warn'); return; }
   current = accounts[0].id;
   renderTabs();
   show('app');
@@ -363,6 +429,15 @@ async function checkEgress(){
     const r = await api(`/api/${mAcct}/egress/check`);
     out.innerHTML = `当前出口公网 IP：<span class="ip">${r.ip}</span><br><small style="color:var(--muted)">对照一下是否 = 你给这个账号分配的代理/源 IP</small>`;
   }catch(e){ out.style.display='none'; mErr(e.message); }
+}
+async function delAccount(){
+  if(!confirm(`删除账号「${mAcct}」？这会从面板移除它，并删除它的私钥文件。`)) return;
+  if(!confirm('再次确认删除该账号？')) return;
+  mErr('');
+  try{
+    await api(`/api/accounts/${mAcct}/delete`,{method:'POST',body:JSON.stringify({delete_key:true})});
+    closeSettings(); await boot();
+  }catch(e){ mErr(e.message); }
 }
 
 let curRows = [];

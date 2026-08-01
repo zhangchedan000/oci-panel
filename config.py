@@ -40,6 +40,36 @@ def _check_key_perms(key_file: str, acct_id: str) -> None:
         )
 
 
+def _dump_yaml(path: str, raw: dict) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(raw, f, allow_unicode=True, sort_keys=False, default_flow_style=False)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def add_account(path: str, acct: dict) -> None:
+    """Append a new account to accounts.yaml (used by the in-panel add form)."""
+    with open(path, "r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f) or {}
+    raw.setdefault("accounts", [])
+    if any(a.get("id") == acct["id"] for a in raw["accounts"]):
+        raise ValueError(f"账号 id '{acct['id']}' 已存在")
+    raw["accounts"].append(acct)
+    _dump_yaml(path, raw)
+
+
+def remove_account(path: str, acct_id: str) -> None:
+    with open(path, "r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f) or {}
+    before = len(raw.get("accounts", []))
+    raw["accounts"] = [a for a in raw.get("accounts", []) if a.get("id") != acct_id]
+    if len(raw["accounts"]) == before:
+        raise ValueError(f"账号 '{acct_id}' 不存在")
+    _dump_yaml(path, raw)
+
+
 def load(path: str) -> tuple[Manager, str]:
     with open(path, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f)
@@ -91,10 +121,8 @@ def load(path: str) -> tuple[Manager, str]:
             limiter=limiter,
         )
 
-    if not accounts:
-        raise SystemExit("accounts.yaml 里没有配置任何账号")
-
     ident.prune(accounts.keys())   # drop identities for accounts no longer configured
+    # zero accounts is OK: the panel starts empty and accounts are added via the web UI
     mgr = Manager(accounts)
     mgr.settings = settings        # so the app can persist egress edits
     return mgr, panel_auth
